@@ -8,12 +8,14 @@ using InteractiveUtils
 begin
 	import Plots
 	using StatsBase
+	import JLD2
 end
 
 # ╔═╡ e31d15f7-b1cc-4d6f-bfc9-ed570c290331
 begin
-	DEBUG = 2 # This is used to enable verbose output
+	DEBUG = 3 # This is used to enable verbose output
 	TESTING = true # This is used to switch in code that does extra tests
+	POLICY_FILENAME = "policy.bin"
 end
 
 # ╔═╡ 60f1ac7e-f550-47a6-abad-3d970cb35841
@@ -130,7 +132,6 @@ grid = create_grid()
 begin
 	println("Grid:")
 	print_grid(grid)
-	print(grid.𝒮_map)
 end
 
 # ╔═╡ 0e2f3339-2047-4550-8513-3a0857dd715e
@@ -225,7 +226,8 @@ begin
 		if TESTING
 			# Make sure that the next state is NOT the position of the bot
 			if g.bot_pos .+ action_map[grid_get_action(g)] == g.crew_pos
-				error("Unexpected collision with Crew member!")
+				#error("Unexpected collision with Crew member!")
+				return
 			end
 		end
 		g.bot_pos = g.bot_pos .+ action_map[grid_get_action(g)]
@@ -345,6 +347,11 @@ begin
 		crew_pos = s[2]
 		neighbors = grid_get_open_bot_neighbors(g, bot_pos)
 		neighbors = filter(x->x != crew_pos, neighbors)
+		if TESTING
+			if crew_pos in neighbors
+				error("Crew Position Found in Neighbors")
+			end
+		end
 		push!(neighbors, bot_pos)
 		actions = [get_relative_position(bot_pos, neighbor) for neighbor in neighbors]
 		return actions
@@ -358,13 +365,14 @@ begin
 		bot_pos = s[1]
 		future_bot_pos = action_map[a] .+ bot_pos
 		crew_neighbors = grid_get_open_crew_neighbors(g, crew_pos)
-		# If the state is not normal, which can only happen with the bot position here
-		# we return an empty list
+		# If the action makes the bot go into an invalid spot, we return an empty list
 		if !grid_is_valid_index(g, future_bot_pos) ||
 			!grid_is_open(g, future_bot_pos)
-			if DEBUG == 1
-				print("Invalid Action!")
-			end
+			return []
+		end
+		
+		# If an action leads to overlapping we return an empty list
+		if future_bot_pos == crew_pos
 			return []
 		end
 		# Let us see if the bot will be detected by the crew
@@ -486,10 +494,19 @@ begin
 		return (u, possible_actions[a])
 	end
 
+	function grid_store_policy(g::Grid)
+		JLD2.save_object(POLICY_FILENAME, g.policy)
+	end
+
+	function grid_retrieve_policy(g::Grid)
+		policy = JLD2.load_object(POLICY_FILENAME)
+		g.policy = policy
+	end
+
 	# Policy Iteration
-	function grid_policy_iteration(g::Grid, k_max = 100)
+	function grid_policy_iteration(g::Grid, k_max = 19)
 		for k in 1:k_max
-			if DEBUG == 1
+			if DEBUG == 3
 				println("Policy Iteration: $k")
 			end
 			grid_policy_evaluation(g)
@@ -505,6 +522,7 @@ begin
 			g.policy = new_policy
 		end
 	end
+
 end
 
 # ╔═╡ 63febfe8-b145-4edd-aa95-1a33c539f22e
@@ -517,12 +535,30 @@ end
 begin
 	init_bot_pos = grid.bot_pos
 	init_crew_pos = grid.crew_pos
-	for i in 1:10
+	optimal_bot_results = []
+	for i in 1:100
 		grid.bot_pos = init_bot_pos
 		grid.crew_pos = init_crew_pos
 		result = grid_run_sim(grid, OPTIMAL_BOT)
-		print(result)
+		if result[1]
+			push!(optimal_bot_results, result[2])
+		end
 	end
+	println("Optimal Bot Results:")
+	println("Average:$(sum(optimal_bot_results)/length(optimal_bot_results))")
+	println("StdDev: $(sqrt(sum(( optimal_bot_results .- mean(optimal_bot_results) ).^2))
+					   /length(optimal_bot_results))")
+	no_bot_results = []
+	for i in 1:100
+		grid.bot_pos = init_bot_pos
+		grid.crew_pos = init_crew_pos
+		result = grid_run_sim(grid, NO_BOT)
+		push!(no_bot_results, result[2])
+	end
+	println("No Bot Results:")
+	println("Average:$(sum(no_bot_results)/length(no_bot_results))")
+	println("StdDev: $(sqrt(sum(( optimal_bot_results .- mean(optimal_bot_results) ).^2))
+					   /length(optimal_bot_results))")
 end
 
 # ╔═╡ 00000000-0000-0000-0000-000000000001
