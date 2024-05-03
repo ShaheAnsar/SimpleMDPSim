@@ -1,3 +1,5 @@
 venv/*
 grid*
 *.file
+*.csv
+*.grid

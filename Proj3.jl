@@ -25,6 +25,7 @@ mutable struct Grid
 	γ
 	utilities
 	policy
+	time
 	open
 	bot_pos
 	goal_pos
@@ -122,9 +123,10 @@ begin
 		end
 		utilities = [0.0 for i in 1:length(states)]
 		policy = [STAY for i in 1:length(states)]
+		time = [0 for i in 1:length(states)]
 		smap = Dict(s=>i for (i,s) in enumerate(states))
 		# Initialize with dummy state space
-		g = Grid(D, gamma, utilities, policy, open, bot_pos, goal_pos, crew_pos, states, smap)
+		g = Grid(D, gamma, utilities, policy, time, open, bot_pos, goal_pos, crew_pos, states, smap)
 	end
 end
 
@@ -215,13 +217,13 @@ begin
 	# Bot code and crew code goes here
 
 	# Bot is expected to run first
-	function grid_run_bot(g::Grid, t::BotType)
+	function grid_run_bot(g::Grid, t::BotType, params)
 		if t == NO_BOT
 			return
 		elseif t == OPTIMAL_BOT
 			grid_run_bot_optimal(g)
 		elseif t == LEARNED_BOT
-			grid_run_bot_learned(g)
+			grid_run_bot_learned(g, params)
 		end
 	end
 
@@ -239,7 +241,21 @@ begin
 		g.bot_pos = g.bot_pos .+ action_map[grid_get_action(g)]
 	end
 	# Learned Bot implementation
-	function grid_run_bot_learned(g::Grid)
+	function grid_run_bot_learned(g::Grid, m)
+		s = [g.bot_pos[1], g.bot_pos[2], g.crew_pos[1], g.crew_pos[2]]
+		s = vcat(s...)
+		action_list = [NORTH, SOUTH, WEST, EAST, NORTHEAST, NORTHWEST,
+		SOUTHEAST, SOUTHWEST, STAY]
+		action = Flux.onecold(m(s), action_list)
+		future_bot_pos = g.bot_pos .+ action_map[action]
+		# If the future position is correct, we use it
+		# Otherwise we stay put
+		if grid_is_valid_index(g, future_bot_pos) &&
+		grid_is_open(g, future_bot_pos) &&
+		future_bot_pos != g.crew_pos
+			g.bot_pos = future_bot_pos
+			return
+		end
 	end
 	
 	# Crew is run after the Bot
@@ -274,9 +290,9 @@ begin
 	end
 
 	# Runs a simulation and returns the tuple - (Reached Goal?, Turns to reach goal)
-	function grid_run_sim(g::Grid, bot_type::BotType, k_max=500)
+	function grid_run_sim(g::Grid, bot_type::BotType, params=nothing, k_max=500)
 		for turn in 1:k_max
-			grid_run_bot(g, bot_type)
+			grid_run_bot(g, bot_type, params)
 			grid_run_crew(g)
 			if g.crew_pos == g.goal_pos
 				return (true, turn)
@@ -454,6 +470,7 @@ begin
 		return reward
 	end
 	
+	
 	# Implement the utility lookahead function
 	function grid_lookahead(g::Grid, s, a)
 		accessible_states = grid_get_accessible_states(g, s, a)
@@ -471,6 +488,27 @@ begin
 		return u
 	end
 
+	function grid_lookahead_time(g::Grid, s, a)
+		accessible_states = grid_get_accessible_states(g, s, a)
+		# If we are at the goal position, time will be 0
+		if s[2] == g.goal_pos
+			return 0
+		end
+		# If not,
+		t = 1 # Every accessibe action is 1 turn away
+		for s′ in accessible_states
+			if DEBUG == 1
+				println("s′ in accessible_states")
+			end
+			if s′ ∉ g.𝒮
+				println("[ERROR] Can't find state in statespace!")
+				println("Relevant data: $accessible_states")
+			end
+			t += g.time[g.𝒮_map[s′]] *  1.0/length(accessible_states)
+		end
+		return t
+	end
+
 	# Policy Evaluation
 	function grid_policy_evaluation(g::Grid, k_max = 5)
 		for k in 1:k_max
@@ -480,6 +518,58 @@ begin
 			g.utilities = [grid_lookahead(g, s, g.policy[i]) for (i, s) in enumerate(g.𝒮)]
 		end
 	end
+
+	# Time Evaluation
+	function grid_time_evaluation(g::Grid, k_max = 100)
+		for k in 1:k_max
+			if DEBUG == 3
+				println("Time Evaluation: $k")
+			end
+			time = [grid_lookahead_time(g, s, g.policy[i]) for (i, s) in enumerate(g.𝒮)]
+			if sum(abs.(time - g.time))/length(time) < 1e-1
+				println("Convergence acquired!")
+				break
+			end
+			g.time = time
+		end
+	end
+	# Time Lookahead for No bot
+	function grid_lookahead_time_nobot(g::Grid, crew_pos)
+		if crew_pos == g.goal_pos
+			return 0
+		end
+		accessible_crew_pos = grid_get_open_crew_neighbors(s)
+		# If we are at the goal position, time will be 0
+		# If not,
+		t = 1 # Every accessibe action is 1 turn away
+		for crew_pos′ in accessible_crew_pos
+			t += g.time[g.𝒮_map[crew_pos]] *  1.0/length(accessible_states)
+		end
+		return t
+	end
+
+	# Time Evaluation No bot
+	function grid_time_evaluation_nobot(g::Grid, k_max = 100)
+		# Make a few changes since there is no bot
+		# State space is the position of crew alone
+		g.𝒮 = [(i, j) for i in 1:g.size for j in 1:g.size]
+		# Filter out blocked cells from state space
+		g.𝒮 = filter(x->g.open[x[2]][x[1]], g.𝒮)
+		g.𝒮_map = Dict(s=>i for (i, s) in enumerate(g.𝒮))
+		g.time = [0 for s in g.𝒮]
+		for k in 1:k_max
+			if DEBUG == 3
+				println("Time Evaluation: $k")
+			end
+			time = [grid_lookahead_time_nobot(g, s) for (i, s) in enumerate(g.𝒮)]
+			if sum(abs.(time - g.time))/length(time) < 1e-1
+				println("Convergence acquired!")
+				break
+			end
+			g.time = time
+		end
+	end
+
 
 	function grid_get_best_action(g::Grid, s)
 		possible_actions = grid_get_valid_actions(g, s)
@@ -544,9 +634,16 @@ end
 
 # ╔═╡ 63febfe8-b145-4edd-aa95-1a33c539f22e
 begin
-	#grid_policy_iteration(grid)
+	grid_policy_iteration(grid)
+
 	#println("Stay is viable?: $(STAY in grid.policy)")
-	gather_data()
+	#gather_data(12)
+end
+
+# ╔═╡ 768e2a41-4fc0-4270-9ba8-b06c8c8c973d
+begin
+		grid_time_evaluation(grid)
+		print(grid.time)
 end
 
 # ╔═╡ 67d0cd76-6d93-448d-98dc-2a5689a31034
@@ -578,19 +675,16 @@ begin
 		# Model Creation
 		model = Flux.Chain(
 	    Flux.Dense(4 => 50, Flux.relu),   # 4 Input Nodes for 2x2D coordinates
-	    Flux.BatchNorm(50),
 		Flux.Dense(50 => 40, Flux.relu),
-		Flux.BatchNorm(40),
-	    Flux.Dense(40 => 20, Flux.relu),
-		Flux.BatchNorm(20),
-		Flux.Dense(20=>9),# 9 Actions are available
+	    Flux.Dense(40 => 30, Flux.relu),
+		Flux.Dense(30=>9),# 9 Actions are available
 	    Flux.softmax) 
 
 		# Model Training
 		# Optimizer setup
-		optim = Flux.setup(Flux.Adam(0.01), model)
+		optim = Flux.setup(Flux.Adam(0.001), model)
 		loss_history = []
-		for epoch in 1:50000
+		for epoch in 1:1000
 			for (x, y) in loader
 				loss, grads = Flux.withgradient(model) do m
 					ŷ = m(x)
@@ -605,7 +699,7 @@ begin
 		println("Accuracy = $(count(Flux.onecold(model(X), action_list) .== Y_raw)/size(X)[2])")
 		return model
 	end
-	#learn_policy(grid)
+	model = learn_policy(grid)
 end
 
 # ╔═╡ 95ea77db-ad24-416d-9968-fde73591b6d4
@@ -625,6 +719,21 @@ begin
 	println("Average:$(sum(optimal_bot_results)/length(optimal_bot_results))")
 	println("StdDev: $(sqrt(sum(( optimal_bot_results .- mean(optimal_bot_results) ).^2))
 					   /length(optimal_bot_results))")
+
+	learned_bot_results = []
+	for i in 1:100
+		grid.bot_pos = init_bot_pos
+		grid.crew_pos = init_crew_pos
+		result = grid_run_sim(grid, LEARNED_BOT, model)
+		if result[1]
+			push!(learned_bot_results, result[2])
+		end
+	end
+	println("Learned Bot Results:")
+	println("Average:$(sum(learned_bot_results)/length(learned_bot_results))")
+	println("StdDev: $(sqrt(sum(( learned_bot_results .- mean(learned_bot_results) ).^2))
+					   /length(learned_bot_results))")
+	
 	no_bot_results = []
 	for i in 1:100
 		grid.bot_pos = init_bot_pos
@@ -2214,6 +2323,7 @@ version = "1.4.1+1"
 # ╠═0e2f3339-2047-4550-8513-3a0857dd715e
 # ╠═d5ec5aac-3755-4c00-9582-38ee6be6bb3e
 # ╠═63febfe8-b145-4edd-aa95-1a33c539f22e
+# ╠═768e2a41-4fc0-4270-9ba8-b06c8c8c973d
 # ╠═67d0cd76-6d93-448d-98dc-2a5689a31034
 # ╠═95ea77db-ad24-416d-9968-fde73591b6d4
 # ╟─00000000-0000-0000-0000-000000000001
