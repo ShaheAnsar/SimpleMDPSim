@@ -8,7 +8,7 @@ using InteractiveUtils
 begin
 	import Plots
 	using StatsBase
-	import JLD2
+	import JSON
 	import Flux, Statistics, ProgressMeter
 end
 
@@ -90,7 +90,7 @@ begin
 		# position
 		blocked_cells = filter(x->sum(abs.(x .- goal_pos)) > 2, blocked_cells)
 		# Randomly choose from the leftover indices, and block them
-		blocked_cells = sample([(i, j) for i in 1:D for j in 1:D], 10, replace=false)
+		blocked_cells = sample(blocked_cells, 10, replace=false)
 		for index in blocked_cells
 			open[index[2]][index[1]] = false
 		end
@@ -500,13 +500,14 @@ begin
 		return (u, possible_actions[a])
 	end
 
-	function grid_store_policy(g::Grid)
-		JLD2.save_object(POLICY_FILENAME, g.policy)
+	function grid_store_policy(g::Grid, fname)
+		open(fname, "w") do f
+			write(f, JSON.json(g))
+		end
 	end
 
 	function grid_retrieve_policy(g::Grid)
-		policy = JLD2.load_object(POLICY_FILENAME)
-		g.policy = policy
+		return nothing
 	end
 
 	# Policy Iteration
@@ -529,12 +530,23 @@ begin
 		end
 	end
 
+	function gather_data(k_max=10)
+		Threads.@threads for k in 1:k_max
+			println("[TID: $(Threads.threadid())}]Data Gathering Turn: $k")
+			g = create_grid()
+			print_grid(g)
+			grid_policy_iteration(g)
+			grid_store_policy(g, "grid$k.file")
+		end
+	end
+
 end
 
 # ╔═╡ 63febfe8-b145-4edd-aa95-1a33c539f22e
 begin
-	grid_policy_iteration(grid)
-	println("Stay is viable?: $(STAY in grid.policy)")
+	#grid_policy_iteration(grid)
+	#println("Stay is viable?: $(STAY in grid.policy)")
+	gather_data()
 end
 
 # ╔═╡ 67d0cd76-6d93-448d-98dc-2a5689a31034
@@ -593,7 +605,7 @@ begin
 		println("Accuracy = $(count(Flux.onecold(model(X), action_list) .== Y_raw)/size(X)[2])")
 		return model
 	end
-	learn_policy(grid)
+	#learn_policy(grid)
 end
 
 # ╔═╡ 95ea77db-ad24-416d-9968-fde73591b6d4
@@ -630,7 +642,7 @@ end
 PLUTO_PROJECT_TOML_CONTENTS = """
 [deps]
 Flux = "587475ba-b771-5e3f-ad9e-33799f191a9c"
-JLD2 = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
+JSON = "682c06a0-de6a-54ab-a142-c8b1cf79cde6"
 Plots = "91a5bcdd-55d7-5caf-9e0b-520d859cae80"
 ProgressMeter = "92933f4c-e287-5a05-a399-4b506db050ca"
 Statistics = "10745b16-79ce-11e8-11f9-7d13ad32a3b2"
@@ -638,7 +650,7 @@ StatsBase = "2913bbd2-ae8a-5f71-8c99-4fb6c76f3a91"
 
 [compat]
 Flux = "~0.14.15"
-JLD2 = "~0.4.46"
+JSON = "~0.21.4"
 Plots = "~1.40.4"
 ProgressMeter = "~1.10.0"
 StatsBase = "~0.34.3"
@@ -650,7 +662,7 @@ PLUTO_MANIFEST_TOML_CONTENTS = """
 
 julia_version = "1.10.2"
 manifest_format = "2.0"
-project_hash = "28aea24c942f87201f095b131d0badb940cc1d37"
+project_hash = "ea3dbc7375e4a6c96e869ff8031de303abfda2aa"
 
 [[deps.AbstractFFTs]]
 deps = ["LinearAlgebra"]
@@ -954,12 +966,6 @@ git-tree-sha1 = "656f7a6859be8673bf1f35da5670246b923964f7"
 uuid = "b9860ae5-e623-471e-878b-f6a53c775ea6"
 version = "0.1.1"
 
-[[deps.FileIO]]
-deps = ["Pkg", "Requires", "UUIDs"]
-git-tree-sha1 = "82d8afa92ecf4b52d78d869f038ebfb881267322"
-uuid = "5789e2e9-d7fb-5bc7-8068-2c6fae9b9549"
-version = "1.16.3"
-
 [[deps.FileWatching]]
 uuid = "7b1f6079-737a-58dc-b8bc-7a2ca5c1b5ee"
 
@@ -1135,12 +1141,6 @@ version = "0.2.2"
 git-tree-sha1 = "a3f24677c21f5bbe9d2a714f95dcd58337fb2856"
 uuid = "82899510-4779-5014-852e-03e436cf321d"
 version = "1.0.0"
-
-[[deps.JLD2]]
-deps = ["FileIO", "MacroTools", "Mmap", "OrderedCollections", "Pkg", "PrecompileTools", "Printf", "Reexport", "Requires", "TranscodingStreams", "UUIDs"]
-git-tree-sha1 = "5ea6acdd53a51d897672edb694e3cc2912f3f8a7"
-uuid = "033835bb-8acc-5ee8-8aae-3f567f8a3819"
-version = "0.4.46"
 
 [[deps.JLFzf]]
 deps = ["Pipe", "REPL", "Random", "fzf_jll"]
