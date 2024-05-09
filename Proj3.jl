@@ -684,7 +684,7 @@ begin
 		# Optimizer setup
 		optim = Flux.setup(Flux.Adam(0.001), model)
 		loss_history = []
-		for epoch in 1:1000
+		for epoch in 1:2000
 			for (x, y) in loader
 				loss, grads = Flux.withgradient(model) do m
 					ŷ = m(x)

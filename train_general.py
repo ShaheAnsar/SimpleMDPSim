@@ -5,6 +5,7 @@ import torch.optim as optim
 import os
 import matplotlib.pyplot as plt
 from sklearn import preprocessing
+from sklearn.metrics import classification_report
 from sklearn.model_selection import train_test_split
 import json
 
@@ -92,10 +93,12 @@ if MODEL == "LEARNED":
         nn.ReLU(),
         nn.Linear(50, 40),
         nn.ReLU(),
+        nn.Linear(40, 40),
+        nn.ReLU(),
         nn.Linear(40, 30),
         nn.ReLU(),
         nn.Linear(30, 9),
-        nn.Sigmoid())
+        nn.Softmax(dim=1))
 elif MODEL == "GENERAL":
     model = nn.Sequential(
         nn.Linear(32, 70),
@@ -111,13 +114,14 @@ elif MODEL == "GENERAL":
 else:
     exit(-1)
 
-    
-
+model.to(device) 
+X = X.to(device)
+y = y.to(device)
 loss_fn = nn.BCELoss()  # binary cross entropy
 optimizer = optim.Adam(model.parameters(), lr=0.0001)
 
 epochs = 1000
-batch_size = 8192
+batch_size = 1024*1024
  
 for epoch in range(epochs):
     for i in range(0, len(X), batch_size):
@@ -137,5 +141,7 @@ for epoch in range(epochs):
 with torch.no_grad():
     y_hat = model(X_test)
  
-accuracy = (y_hat.round() == y_test).float().mean()
-print(f"Accuracy {accuracy}")
+#accuracy = (y_hat.round() == y_test).float().mean()
+y_hat = torch.argmax(y_hat, dim=1)
+y_test = torch.argmax(y_test, dim=1)
+print(classification_report(y_hat, y_test))
